@@ -7,7 +7,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 echo "[*] Update dependensi sistem..."
-apt-get update -y > /dev/null
+apt-get update -y || true
 apt-get install -y curl python3 python3-pip ufw > /dev/null
 
 INSTALL_DIR="/opt/vpn-agent"
