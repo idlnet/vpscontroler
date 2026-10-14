@@ -4,7 +4,7 @@ from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel
 
 app = FastAPI()
-SECRET_TOKEN = os.getenv("AGENT_SECRET", "default_secret")
+SECRET_TOKEN = os.getenv("AGENT_SECRET", "")
 
 class AccountRequest(BaseModel):
     protocol: str
@@ -18,10 +18,10 @@ def ping():
 
 @app.post("/api/account/create")
 def create_account(data: AccountRequest, x_agent_token: str = Header(None)):
-    if x_agent_token != SECRET_TOKEN:
+    if not SECRET_TOKEN or x_agent_token != SECRET_TOKEN:
         raise HTTPException(status_code=401, detail="Token autentikasi salah")
 
-    # Sesuaikan path script CLI bawaan script tunneling VPS Anda
+    # Sesuaikan path script CLI bawaan autoscript VPS Anda
     commands = {
         "ssh": f"/usr/bin/add-ssh {data.username} {data.password} {data.duration_days}",
         "vmess": f"/usr/bin/add-ws {data.username} {data.duration_days}",
@@ -34,12 +34,23 @@ def create_account(data: AccountRequest, x_agent_token: str = Header(None)):
         raise HTTPException(status_code=400, detail="Protokol tidak didukung")
 
     try:
-        proc = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=True)
+        proc = subprocess.run(
+            cmd, 
+            shell=True, 
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.PIPE, 
+            text=True, 
+            timeout=30
+        )
+        
+        output = proc.stdout if proc.stdout else proc.stderr
         return {
             "status": "success",
             "protocol": data.protocol,
             "username": data.username,
-            "raw_output": proc.stdout
+            "raw_output": output
         }
-    except subprocess.CalledProcessError as e:
-        raise HTTPException(status_code=500, detail=f"Gagal: {e.stderr or e.stdout}")
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Proses script di server memakan waktu terlalu lama (timeout)")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Terjadi kesalahan: {str(e)}")
