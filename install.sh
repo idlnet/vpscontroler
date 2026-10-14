@@ -17,7 +17,7 @@ echo "[*] Mengunduh Agent..."
 # GANTI USERNAME DAN REPO DENGAN MILIK ANDA
 curl -sL -o "$INSTALL_DIR/agent.py" https://raw.githubusercontent.com/username/vps-agent-tunnel/main/agent.py
 
-pip3 install fastapi uvicorn > /dev/null 2>&1
+apt-get install -y python3-fastapi python3-uvicorn
 
 AGENT_TOKEN=$(openssl rand -hex 16)
 AGENT_PORT=5050
