@@ -1,56 +1,72 @@
 import os
+import json
 import subprocess
-from fastapi import FastAPI, HTTPException, Header
-from pydantic import BaseModel
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
-app = FastAPI()
 SECRET_TOKEN = os.getenv("AGENT_SECRET", "")
+PORT = int(os.getenv("AGENT_PORT", 5050))
 
-class AccountRequest(BaseModel):
-    protocol: str
-    username: str
-    duration_days: int
-    password: str = "123456"
+class SimpleHandler(BaseHTTPRequestHandler):
+    def _send_response(self, code, data):
+        self.send_response(code)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps(data).encode('utf-8'))
 
-@app.get("/ping")
-def ping():
-    return {"status": "online"}
+    def do_GET(self):
+        if self.path == '/ping':
+            self._send_response(200, {"status": "online"})
+        else:
+            self._send_response(404, {"error": "Not Found"})
 
-@app.post("/api/account/create")
-def create_account(data: AccountRequest, x_agent_token: str = Header(None)):
-    if not SECRET_TOKEN or x_agent_token != SECRET_TOKEN:
-        raise HTTPException(status_code=401, detail="Token autentikasi salah")
+    def do_POST(self):
+        if self.path != '/api/account/create':
+            self._send_response(404, {"error": "Endpoint tidak wujud"})
+            return
 
-    # Sesuaikan path script CLI bawaan autoscript VPS Anda
-    commands = {
-        "ssh": f"/usr/bin/add-ssh {data.username} {data.password} {data.duration_days}",
-        "vmess": f"/usr/bin/add-ws {data.username} {data.duration_days}",
-        "vless": f"/usr/bin/add-vless {data.username} {data.duration_days}",
-        "trojan": f"/usr/bin/add-tr {data.username} {data.duration_days}"
-    }
+        token = self.headers.get('x-agent-token')
+        if not SECRET_TOKEN or token != SECRET_TOKEN:
+            self._send_response(401, {"error": "Token salah"})
+            return
 
-    cmd = commands.get(data.protocol.lower())
-    if not cmd:
-        raise HTTPException(status_code=400, detail="Protokol tidak didukung")
-
-    try:
-        proc = subprocess.run(
-            cmd, 
-            shell=True, 
-            stdout=subprocess.PIPE, 
-            stderr=subprocess.PIPE, 
-            text=True, 
-            timeout=30
-        )
+        content_length = int(self.headers.get('Content-Length', 0))
+        post_data = self.rfile.read(content_length)
         
-        output = proc.stdout if proc.stdout else proc.stderr
-        return {
-            "status": "success",
-            "protocol": data.protocol,
-            "username": data.username,
-            "raw_output": output
+        try:
+            body = json.loads(post_data.decode('utf-8'))
+        except Exception:
+            self._send_response(400, {"error": "JSON tidak sah"})
+            return
+
+        protocol = body.get('protocol', '').lower()
+        username = body.get('username', '')
+        days = body.get('duration_days', 30)
+        password = body.get('password', '123456')
+
+        commands = {
+            "ssh": f"/usr/bin/add-ssh {username} {password} {days}",
+            "vmess": f"/usr/bin/add-ws {username} {days}",
+            "vless": f"/usr/bin/add-vless {username} {days}",
+            "trojan": f"/usr/bin/add-tr {username} {days}"
         }
-    except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=504, detail="Proses script di server memakan waktu terlalu lama (timeout)")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Terjadi kesalahan: {str(e)}")
+
+        cmd = commands.get(protocol)
+        if not cmd:
+            self._send_response(400, {"error": "Protokol tidak disokong"})
+            return
+
+        try:
+            proc = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30)
+            output = proc.stdout if proc.stdout else proc.stderr
+            self._send_response(200, {
+                "status": "success",
+                "protocol": protocol,
+                "username": username,
+                "raw_output": output
+            })
+        except Exception as e:
+            self._send_response(500, {"error": str(e)})
+
+if __name__ == '__main__':
+    server = HTTPServer(('0.0.0.0', PORT), SimpleHandler)
+    server.serve_forever()
